@@ -1,0 +1,258 @@
+rules_version = '2';
+
+// Church CMS: multi-church platform.
+//  - platformAdmins/{uid}      the system owner(s). Created by hand in the Firebase console.
+//  - users/{uid}               profile + memberships (which churches, which role)
+//  - churches/{churchId}/...   all church data; every rule checks the caller's membership.
+//
+// Accounts are never self-registered: the platform admin creates each church and its
+// administrator; the church admin creates logins for the rest of the team.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isPlatformAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/platformAdmins/$(request.auth.uid));
+    }
+    function membershipPath(churchId, uid) {
+      return /databases/$(database)/documents/users/$(uid)/memberships/$(churchId);
+    }
+    function churchPath(churchId) {
+      return /databases/$(database)/documents/churches/$(churchId);
+    }
+    function isMember(churchId) {
+      return signedIn()
+        && exists(membershipPath(churchId, request.auth.uid))
+        && get(membershipPath(churchId, request.auth.uid)).data.status == 'active';
+    }
+    function roleOf(churchId) {
+      return get(membershipPath(churchId, request.auth.uid)).data.role;
+    }
+    function churchOpen(churchId) {
+      return get(churchPath(churchId)).data.status == 'active';
+    }
+    // Active member of an ACTIVE (not suspended) church holding one of [roles].
+    function hasRole(churchId, roles) {
+      return isMember(churchId) && churchOpen(churchId) && roleOf(churchId) in roles;
+    }
+    function isOpenMember(churchId) {
+      return isMember(churchId) && churchOpen(churchId);
+    }
+
+    // Role groups. Keep in sync with lib/core/constants/roles.dart
+    function financeRoles()  { return ['admin', 'accountant']; }
+    function staffRoles()    { return ['admin', 'accountant', 'pastor', 'leader', 'staff']; }  // view members, request purchases
+    function peopleEditors() { return ['admin', 'pastor', 'staff']; }                         // members, services, events
+    function attendanceMarkers() { return ['admin', 'pastor', 'leader', 'staff']; }
+    function workers()       { return ['admin', 'accountant', 'pastor', 'staff']; }          // clock in/out
+    function nonAdminRoles() { return ['accountant', 'pastor', 'leader', 'staff', 'member']; }
+
+    // ── Platform admins (read-only for clients) ─────────────────────────
+    match /platformAdmins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // ── Users ───────────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+
+      // A new login's profile is created by the platform admin or by that church's admin.
+      allow create: if signedIn() && request.auth.uid != uid
+        && request.resource.data.keys().hasOnly(['displayName', 'email', 'createdAt', 'mustChangePassword', 'provisionedBy', 'provisionedChurchId'])
+        && request.resource.data.provisionedBy == request.auth.uid
+        && request.resource.data.mustChangePassword == true
+        && (isPlatformAdmin()
+            || (request.resource.data.provisionedChurchId is string
+                && hasRole(request.resource.data.provisionedChurchId, ['admin'])));
+
+      // The user can only clear the "must change password" flag.
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChangePassword'])
+        && request.resource.data.mustChangePassword == false;
+
+      allow delete: if false;
+
+      match /memberships/{churchId} {
+        allow read: if signedIn() && request.auth.uid == uid;
+
+        // Only for a brand-new user (the user doc is created in the same batch).
+        allow create: if signedIn() && request.auth.uid != uid
+          && !exists(/databases/$(database)/documents/users/$(uid))
+          && existsAfter(/databases/$(database)/documents/users/$(uid))
+          && request.resource.data.keys().hasOnly(['churchName', 'role', 'status', 'joinedAt'])
+          && request.resource.data.status == 'active'
+          && ((isPlatformAdmin() && request.resource.data.role == 'admin')
+              || (hasRole(churchId, ['admin']) && request.resource.data.role in nonAdminRoles()));
+
+        // Church admin can change another person's role or switch them off (never an admin).
+        allow update: if signedIn() && request.auth.uid != uid
+          && hasRole(churchId, ['admin'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'status'])
+          && resource.data.role != 'admin'
+          && request.resource.data.role != 'admin';
+
+        allow delete: if false;
+      }
+    }
+
+    // ── Churches ────────────────────────────────────────────────────────
+    match /churches/{churchId} {
+      allow read: if isPlatformAdmin() || isMember(churchId);
+
+      allow create: if isPlatformAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'country', 'currency', 'status', 'createdBy', 'createdAt', 'adminUid', 'adminEmail', 'settings'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status == 'active';
+
+      allow update: if (isPlatformAdmin()
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy', 'createdAt']))
+        || (hasRole(churchId, ['admin'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings', 'name', 'currency']));
+
+      allow delete: if false;
+
+      // Team mirror: one doc per login in this church.
+      match /team/{uid} {
+        allow read: if hasRole(churchId, ['admin']) || (isOpenMember(churchId) && request.auth.uid == uid);
+
+        allow create: if signedIn() && request.auth.uid != uid
+          && request.resource.data.keys().hasOnly(['displayName', 'email', 'role', 'status', 'createdAt'])
+          && ((isPlatformAdmin() && request.resource.data.role == 'admin')
+              || (hasRole(churchId, ['admin']) && request.resource.data.role in nonAdminRoles()));
+
+        allow update: if hasRole(churchId, ['admin']) && request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'status'])
+          && resource.data.role != 'admin'
+          && request.resource.data.role != 'admin';
+
+        allow delete: if false;
+      }
+
+      // ── People ──
+      match /members/{memberId} {
+        allow read: if hasRole(churchId, staffRoles());
+        allow create, update, delete: if hasRole(churchId, peopleEditors());
+      }
+
+      match /services/{serviceId} {
+        allow read: if isOpenMember(churchId);
+        allow write: if hasRole(churchId, peopleEditors());
+
+        match /attendance/{memberId} {
+          allow read, write: if hasRole(churchId, attendanceMarkers());
+        }
+      }
+
+      match /events/{eventId} {
+        allow read: if isOpenMember(churchId);
+        allow write: if hasRole(churchId, peopleEditors());
+      }
+
+      // ── Accounting (admin, or the accountant when the church has one) ──
+      match /funds/{fundId} {
+        allow read: if hasRole(churchId, financeRoles());
+        allow create: if hasRole(churchId, financeRoles());
+        allow update: if hasRole(churchId, financeRoles())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'restricted', 'active', 'balance']);
+        allow delete: if false;
+      }
+
+      match /categories/{categoryId} {
+        allow read: if hasRole(churchId, financeRoles());
+        allow create, update: if hasRole(churchId, financeRoles());
+        allow delete: if false;
+      }
+
+      match /transactions/{txId} {
+        allow read: if hasRole(churchId, financeRoles());
+
+        allow create: if hasRole(churchId, financeRoles())
+          && request.resource.data.keys().hasOnly(['type', 'amount', 'fundId', 'fundName', 'categoryId', 'categoryName', 'method', 'date', 'description', 'memberId', 'memberName', 'source', 'requisitionId', 'budgetId', 'budgetLineId', 'status', 'recordedBy', 'createdAt'])
+          && request.resource.data.type in ['income', 'expense']
+          && request.resource.data.amount is int && request.resource.data.amount > 0
+          && request.resource.data.source in ['manual', 'procurement']
+          && request.resource.data.status == 'confirmed'
+          && request.resource.data.recordedBy == request.auth.uid;
+
+        // The ledger is never edited or deleted: an entry can only be voided.
+        allow update: if hasRole(churchId, financeRoles())
+          && resource.data.status == 'confirmed'
+          && request.resource.data.status == 'voided'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'voidedAt', 'voidedBy']);
+
+        allow delete: if false;
+      }
+
+      // ── Budgets ──
+      match /budgets/{budgetId} {
+        allow read: if hasRole(churchId, staffRoles());
+        allow create, update: if hasRole(churchId, financeRoles());
+        allow delete: if false;
+
+        match /lines/{lineId} {
+          allow read: if hasRole(churchId, staffRoles());
+          allow create: if hasRole(churchId, financeRoles());
+          allow update: if hasRole(churchId, financeRoles())
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'planned', 'committed', 'actual']);
+          allow delete: if false;
+        }
+      }
+
+      // ── Procurement ──
+      function reqChange() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'approvedBy', 'approvedByName', 'approvedAt', 'rejectionReason', 'orderedAt', 'receivedAt', 'paidAt', 'paymentMethod', 'transactionId', 'updatedAt']);
+      }
+      function validTransition(churchId) {
+        let from = resource.data.status;
+        let to = request.resource.data.status;
+        return (from == 'submitted' && to in ['approved', 'rejected'] && hasRole(churchId, ['admin']))
+          || (from == 'submitted' && to == 'cancelled'
+              && (hasRole(churchId, ['admin']) || resource.data.requestedBy == request.auth.uid))
+          || (from == 'approved' && to in ['ordered', 'cancelled'] && hasRole(churchId, financeRoles()))
+          || (from == 'ordered' && to == 'received' && hasRole(churchId, financeRoles()))
+          || (from == 'received' && to == 'paid' && hasRole(churchId, financeRoles()));
+      }
+
+      match /requisitions/{reqId} {
+        // Finance roles see all requests; other staff only their own.
+        allow read: if hasRole(churchId, financeRoles())
+          || (hasRole(churchId, staffRoles()) && resource.data.requestedBy == request.auth.uid);
+
+        allow create: if hasRole(churchId, staffRoles())
+          && request.resource.data.keys().hasOnly(['title', 'description', 'vendor', 'amount', 'budgetId', 'budgetLineId', 'budgetLineName', 'status', 'requestedBy', 'requestedByName', 'createdAt'])
+          && request.resource.data.status == 'submitted'
+          && request.resource.data.requestedBy == request.auth.uid
+          && request.resource.data.amount is int && request.resource.data.amount > 0;
+
+        allow update: if reqChange() && validTransition(churchId);
+        allow delete: if false;
+      }
+
+      // ── Remote work log: one record per person per day ──
+      match /workLogs/{logId} {
+        allow read: if hasRole(churchId, ['admin'])
+          || (hasRole(churchId, workers()) && resource.data.uid == request.auth.uid);
+
+        allow create: if hasRole(churchId, workers())
+          && request.resource.data.keys().hasOnly(['uid', 'userName', 'date', 'mode', 'clockIn', 'clockOut', 'notes'])
+          && request.resource.data.uid == request.auth.uid
+          && logId == request.auth.uid + '_' + request.resource.data.date
+          && request.resource.data.mode in ['office', 'home', 'field'];
+
+        allow update: if hasRole(churchId, workers())
+          && resource.data.uid == request.auth.uid
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.date == resource.data.date
+          && request.resource.data.keys().hasOnly(['uid', 'userName', 'date', 'mode', 'clockIn', 'clockOut', 'notes']);
+
+        allow delete: if false;
+      }
+    }
+  }
+}
