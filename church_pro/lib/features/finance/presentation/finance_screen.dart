@@ -5,8 +5,10 @@ import '../../../app/providers.dart';
 import '../../../core/constants/roles.dart';
 import '../../budget/presentation/budgets_tab.dart';
 import '../../procurement/presentation/purchases_tab.dart';
+import 'giving_tab.dart';
 import 'ledger_tab.dart';
 import 'overview_tab.dart';
+import 'reports_tab.dart';
 
 /// Finance hub. Admin and accountant see everything (accounting is done by the
 /// admin, or by the accountant when the church has one). Other staff only see
@@ -35,7 +37,7 @@ class _FinanceScreenState extends ConsumerState<FinanceScreen> {
         final churchId = ref.read(activeChurchIdProvider);
         if (funds.value!.isEmpty && churchId != null) {
           WidgetsBinding.instance.addPostFrameCallback(
-            (_) => ref.read(financeRepositoryProvider).ensureDefaults(churchId),
+                (_) => ref.read(financeRepositoryProvider).ensureDefaults(churchId),
           );
         }
       }
@@ -44,6 +46,8 @@ class _FinanceScreenState extends ConsumerState<FinanceScreen> {
     final tabs = <(String, Widget)>[
       if (viewFinance) ('Overview', const OverviewTab()),
       if (viewFinance) ('Ledger', const LedgerTab()),
+      if (viewFinance) ('Giving', const GivingTab()),
+      if (viewFinance) ('Reports', const ReportsTab()),
       if (viewFinance) ('Budgets', const BudgetsTab()),
       if (canRequest) ('Purchases', const PurchasesTab()),
     ];

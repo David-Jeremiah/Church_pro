@@ -12,10 +12,12 @@ import '../features/church/presentation/church_picker_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/events/presentation/events_screen.dart';
 import '../features/finance/presentation/finance_screen.dart';
+import '../features/finance/presentation/member_statement_screen.dart';
 import '../features/members/domain/member.dart';
 import '../features/members/presentation/member_form_screen.dart';
 import '../features/members/presentation/members_screen.dart';
 import '../features/platform/presentation/add_church_screen.dart';
+import '../features/platform/presentation/platform_admins_screen.dart';
 import '../features/platform/presentation/platform_home_screen.dart';
 import '../features/procurement/presentation/requisition_detail_screen.dart';
 import '../features/procurement/presentation/requisition_form_screen.dart';
@@ -72,7 +74,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/platform',
         builder: (_, _) => const PlatformHomeScreen(),
-        routes: [GoRoute(path: 'add', builder: (_, _) => const AddChurchScreen())],
+        routes: [
+          GoRoute(path: 'add', builder: (_, _) => const AddChurchScreen()),
+          GoRoute(path: 'admins', builder: (_, _) => const PlatformAdminsScreen()),
+        ],
       ),
 
       // Pages opened from the drawer
@@ -117,6 +122,14 @@ final routerProvider = Provider<GoRouter>((ref) {
               path: '/finance',
               builder: (_, _) => const FinanceScreen(),
               routes: [
+                GoRoute(
+                  path: 'member/:id',
+                  parentNavigatorKey: rootKey,
+                  builder: (_, state) => MemberStatementScreen(
+                    memberId: state.pathParameters['id']!,
+                    initialYear: int.tryParse(state.uri.queryParameters['year'] ?? '') ?? DateTime.now().year,
+                  ),
+                ),
                 GoRoute(
                   path: 'budget/:id',
                   parentNavigatorKey: rootKey,

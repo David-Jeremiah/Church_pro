@@ -51,6 +51,9 @@ class FinanceTransaction {
     this.description = '',
     this.memberId,
     this.memberName,
+    this.serviceId,
+    this.serviceTitle,
+    this.receiptNo,
     this.source = 'manual',
     this.requisitionId,
     this.budgetId,
@@ -70,8 +73,17 @@ class FinanceTransaction {
   final PaymentMethod method;
   final DateTime date;
   final String description;
+
+  /// Who gave (income only). Lets us total a person's giving for the year.
   final String? memberId;
   final String? memberName;
+
+  /// The service this offertory was collected at (income only).
+  final String? serviceId;
+  final String? serviceTitle;
+
+  /// Set once an official receipt has been issued, e.g. R-2026-00012.
+  final String? receiptNo;
 
   /// 'manual' or 'procurement'.
   final String source;
@@ -81,4 +93,46 @@ class FinanceTransaction {
   final bool voided;
 
   int get signedAmount => type == TxType.income ? amount : -amount;
+}
+
+/// One member's giving for one year (kept up to date with every ledger entry).
+class GivingTotal {
+  const GivingTotal({
+    required this.memberId,
+    required this.memberName,
+    required this.year,
+    required this.total,
+    required this.count,
+    required this.byCategory,
+  });
+
+  final String memberId;
+  final String memberName;
+  final int year;
+  final int total;
+  final int count;
+
+  /// category id -> amount (for example tithe, offering)
+  final Map<String, int> byCategory;
+
+  int of(String categoryId) => byCategory[categoryId] ?? 0;
+}
+
+/// Church-wide income and expenses for one month.
+class MonthTotal {
+  const MonthTotal({
+    required this.year,
+    required this.month,
+    required this.income,
+    required this.expense,
+    required this.incomeByCategory,
+    required this.expenseByCategory,
+  });
+
+  final int year;
+  final int month;
+  final int income;
+  final int expense;
+  final Map<String, int> incomeByCategory;
+  final Map<String, int> expenseByCategory;
 }

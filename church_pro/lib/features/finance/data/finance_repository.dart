@@ -4,12 +4,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../../data/firebase/firebase_helpers.dart';
 import '../domain/finance_models.dart';
 
-/// churches/{c}/funds/{id}          name, restricted, balance, active
-/// churches/{c}/categories/{id}     name, type
-/// churches/{c}/transactions/{id}   the ledger (never deleted, only voided)
+/// churches/{c}/funds/{id}            name, restricted, balance, active
+/// churches/{c}/categories/{id}       name, type
+/// churches/{c}/transactions/{id}     the ledger (never deleted, only voided)
+/// churches/{c}/givingTotals/{y_m}    one member's giving in one year
+/// churches/{c}/monthlyTotals/{y-MM}  church income and expenses in one month
+/// churches/{c}/counters/receipts_Y   last receipt number issued in year Y
 ///
-/// Fund balances and budget-line counters are kept with atomic increments in the
-/// same batch as the transaction, so they always agree with the ledger.
+/// Balances and totals are kept with atomic increments in the same batch as the
+/// ledger entry, so they always agree with the ledger.
 class FinanceRepository {
   FinanceRepository([FirebaseFirestore? db]) : _db = db ?? FirebaseFirestore.instance;
 
@@ -21,28 +24,28 @@ class FinanceRepository {
 
   Stream<List<Fund>> watchFunds(String churchId) => _church(churchId).collection('funds').snapshots().map(
         (s) => s.docs
-            .map((d) => Fund(
-                  id: d.id,
-                  name: stringOf(d.data()['name']),
-                  restricted: d.data()['restricted'] == true,
-                  balance: (d.data()['balance'] as num?)?.toInt() ?? 0,
-                  active: d.data()['active'] != false,
-                ))
-            .toList()
-          ..sort((a, b) => a.name.compareTo(b.name)),
-      );
+        .map((d) => Fund(
+      id: d.id,
+      name: stringOf(d.data()['name']),
+      restricted: d.data()['restricted'] == true,
+      balance: (d.data()['balance'] as num?)?.toInt() ?? 0,
+      active: d.data()['active'] != false,
+    ))
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name)),
+  );
 
   Stream<List<FinanceCategory>> watchCategories(String churchId) =>
       _church(churchId).collection('categories').snapshots().map(
             (s) => s.docs
-                .map((d) => FinanceCategory(
-                      id: d.id,
-                      name: stringOf(d.data()['name']),
-                      type: enumByName(TxType.values, d.data()['type'], TxType.expense),
-                    ))
-                .toList()
-              ..sort((a, b) => a.name.compareTo(b.name)),
-          );
+            .map((d) => FinanceCategory(
+          id: d.id,
+          name: stringOf(d.data()['name']),
+          type: enumByName(TxType.values, d.data()['type'], TxType.expense),
+        ))
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name)),
+      );
 
   Stream<List<FinanceTransaction>> watchTransactions(String churchId, {DateTime? since, int? limit}) {
     Query<Map<String, dynamic>> q = _tx(churchId);
@@ -51,6 +54,43 @@ class FinanceRepository {
     if (limit != null) q = q.limit(limit);
     return q.snapshots().map((s) => s.docs.map(_fromDoc).toList());
   }
+
+  /// Every entry from one member (any year), newest first.
+  Stream<List<FinanceTransaction>> watchMemberTransactions(String churchId, String memberId) =>
+      _tx(churchId).where('memberId', isEqualTo: memberId).snapshots().map(
+            (s) => s.docs.map(_fromDoc).toList()..sort((a, b) => b.date.compareTo(a.date)),
+      );
+
+  Stream<List<GivingTotal>> watchGivingTotals(String churchId, int year) =>
+      _church(churchId).collection('givingTotals').where('year', isEqualTo: year).snapshots().map(
+            (s) => s.docs
+            .map((d) => GivingTotal(
+          memberId: stringOf(d.data()['memberId']),
+          memberName: stringOf(d.data()['memberName']),
+          year: (d.data()['year'] as num?)?.toInt() ?? year,
+          total: (d.data()['total'] as num?)?.toInt() ?? 0,
+          count: (d.data()['count'] as num?)?.toInt() ?? 0,
+          byCategory: _intMap(d.data()['byCategory']),
+        ))
+            .toList(),
+      );
+
+  Stream<List<MonthTotal>> watchMonthlyTotals(String churchId, int year) =>
+      _church(churchId).collection('monthlyTotals').where('year', isEqualTo: year).snapshots().map(
+            (s) => s.docs
+            .map((d) => MonthTotal(
+          year: (d.data()['year'] as num?)?.toInt() ?? year,
+          month: (d.data()['month'] as num?)?.toInt() ?? 1,
+          income: (d.data()['income'] as num?)?.toInt() ?? 0,
+          expense: (d.data()['expense'] as num?)?.toInt() ?? 0,
+          incomeByCategory: _intMap(d.data()['incomeByCategory']),
+          expenseByCategory: _intMap(d.data()['expenseByCategory']),
+        ))
+            .toList(),
+      );
+
+  Map<String, int> _intMap(Object? raw) =>
+      raw is Map ? raw.map((k, v) => MapEntry('$k', (v as num).toInt())) : <String, int>{};
 
   FinanceTransaction _fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data();
@@ -67,6 +107,9 @@ class FinanceRepository {
       description: stringOf(m['description']),
       memberId: m['memberId'] as String?,
       memberName: m['memberName'] as String?,
+      serviceId: m['serviceId'] as String?,
+      serviceTitle: m['serviceTitle'] as String?,
+      receiptNo: m['receiptNo'] as String?,
       source: stringOf(m['source']).isEmpty ? 'manual' : stringOf(m['source']),
       requisitionId: m['requisitionId'] as String?,
       budgetId: m['budgetId'] as String?,
@@ -117,14 +160,50 @@ class FinanceRepository {
     await queued(batch.commit());
   }
 
-  /// Adds a ledger entry to [batch]: the transaction, the fund balance, and the
-  /// budget line. [releaseCommitted] frees money reserved by an approved purchase.
+  /// Adds the monthly and per-member totals to [batch]. [sign] is 1 to add an
+  /// entry and -1 to take it back out (void).
+  void _stageTotals(WriteBatch batch, String churchId, FinanceTransaction t, int sign) {
+    final y = t.date.year;
+    final m = t.date.month;
+    final amount = t.amount * sign;
+    final income = t.type == TxType.income;
+
+    batch.set(
+      _church(churchId).collection('monthlyTotals').doc('$y-${m.toString().padLeft(2, '0')}'),
+      {
+        'year': y,
+        'month': m,
+        (income ? 'income' : 'expense'): FieldValue.increment(amount),
+        (income ? 'incomeByCategory' : 'expenseByCategory'): {t.categoryId: FieldValue.increment(amount)},
+      },
+      SetOptions(merge: true),
+    );
+
+    if (income && t.memberId != null) {
+      batch.set(
+        _church(churchId).collection('givingTotals').doc('${y}_${t.memberId}'),
+        {
+          'memberId': t.memberId,
+          'memberName': t.memberName ?? '',
+          'year': y,
+          'total': FieldValue.increment(amount),
+          'count': FieldValue.increment(sign),
+          'byCategory': {t.categoryId: FieldValue.increment(amount)},
+        },
+        SetOptions(merge: true),
+      );
+    }
+  }
+
+  /// Adds a ledger entry to [batch]: the transaction, the fund balance, the
+  /// totals and the budget line. [releaseCommitted] frees money reserved by an
+  /// approved purchase.
   DocumentReference<Map<String, dynamic>> stageTransaction(
-    WriteBatch batch,
-    String churchId,
-    FinanceTransaction t, {
-    int releaseCommitted = 0,
-  }) {
+      WriteBatch batch,
+      String churchId,
+      FinanceTransaction t, {
+        int releaseCommitted = 0,
+      }) {
     final ref = _tx(churchId).doc();
     batch.set(ref, {
       'type': t.type.name,
@@ -138,6 +217,8 @@ class FinanceRepository {
       'description': t.description,
       'memberId': t.memberId,
       'memberName': t.memberName,
+      'serviceId': t.serviceId,
+      'serviceTitle': t.serviceTitle,
       'source': t.source,
       'requisitionId': t.requisitionId,
       'budgetId': t.budgetId,
@@ -149,6 +230,7 @@ class FinanceRepository {
     batch.update(_church(churchId).collection('funds').doc(t.fundId), {
       'balance': FieldValue.increment(t.signedAmount),
     });
+    _stageTotals(batch, churchId, t, 1);
     if (t.budgetId != null && t.budgetLineId != null) {
       batch.update(
         _church(churchId).collection('budgets').doc(t.budgetId).collection('lines').doc(t.budgetLineId),
@@ -177,6 +259,7 @@ class FinanceRepository {
     batch.update(_church(churchId).collection('funds').doc(t.fundId), {
       'balance': FieldValue.increment(-t.signedAmount),
     });
+    _stageTotals(batch, churchId, t, -1);
     if (t.budgetId != null && t.budgetLineId != null) {
       batch.update(
         _church(churchId).collection('budgets').doc(t.budgetId).collection('lines').doc(t.budgetLineId),
@@ -184,5 +267,32 @@ class FinanceRepository {
       );
     }
     return queued(batch.commit());
+  }
+
+  /// Gives an income entry its official receipt number (R-2026-00001, 00002...).
+  /// Numbers are sequential per year and a receipt is only ever issued once.
+  /// Needs a connection.
+  Future<String> issueReceipt(String churchId, FinanceTransaction t) {
+    final year = DateTime.now().year;
+    final counterRef = _church(churchId).collection('counters').doc('receipts_$year');
+    final txRef = _tx(churchId).doc(t.id);
+
+    return _db.runTransaction<String>((tx) async {
+      final fresh = await tx.get(txRef);
+      final existing = fresh.data()?['receiptNo'];
+      if (existing is String) return existing;
+
+      final counter = await tx.get(counterRef);
+      final next = ((counter.data()?['next'] as num?)?.toInt() ?? 0) + 1;
+      final number = 'R-$year-${next.toString().padLeft(5, '0')}';
+
+      tx.set(counterRef, {'next': next});
+      tx.update(txRef, {
+        'receiptNo': number,
+        'receiptAt': FieldValue.serverTimestamp(),
+        'receiptBy': _uid,
+      });
+      return number;
+    });
   }
 }
