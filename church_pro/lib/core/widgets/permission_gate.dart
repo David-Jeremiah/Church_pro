@@ -20,8 +20,7 @@ class PermissionGate extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final role = ref.watch(currentRoleProvider);
-    if (Permissions.can(role, permission)) return child;
+    if (ref.watch(canProvider(permission))) return child;
     return fallback ?? const _NoAccess();
   }
 }
@@ -31,13 +30,13 @@ class _NoAccess extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.lock_outline, size: 40),
-            SizedBox(height: 8),
-            Text('You do not have access to this section'),
-          ],
-        ),
-      );
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.lock_outline, size: 40),
+        SizedBox(height: 8),
+        Text('You do not have access to this section'),
+      ],
+    ),
+  );
 }

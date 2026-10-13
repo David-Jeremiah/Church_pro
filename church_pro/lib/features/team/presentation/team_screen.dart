@@ -6,10 +6,12 @@ import '../../../core/constants/roles.dart';
 import '../../../core/utils/password_generator.dart';
 import '../../../core/widgets/credentials_dialog.dart';
 import '../../../core/widgets/permission_gate.dart';
+import '../../../core/widgets/prompt_dialog.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../domain/team_member.dart';
 
-/// Church admin creates logins for the accountant, pastors, staff and leaders.
+/// Church admin creates logins for the accountant, pastors, staff and leaders,
+/// and gives each person a role and a title (for example "Youth pastor").
 class TeamScreen extends ConsumerWidget {
   const TeamScreen({super.key});
 
@@ -17,9 +19,10 @@ class TeamScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final team = ref.watch(teamProvider);
     final myUid = ref.watch(authStateProvider).value?.uid;
+    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.62);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Team & logins')),
+      appBar: AppBar(title: const Text('Team and logins')),
       floatingActionButton: PermissionGate(
         permission: Permission.manageUsers,
         fallback: const SizedBox.shrink(),
@@ -30,7 +33,7 @@ class TeamScreen extends ConsumerWidget {
             builder: (_) => const _AddLoginSheet(),
           ),
           icon: const Icon(Icons.person_add),
-          label: const Text('Add login'),
+          label: const Text('Add a login'),
         ),
       ),
       body: PermissionGate(
@@ -39,15 +42,19 @@ class TeamScreen extends ConsumerWidget {
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('$e')),
           data: (list) => ListView.separated(
+            padding: const EdgeInsets.only(bottom: 100),
             itemCount: list.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
+            separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (_, i) {
               final m = list[i];
               final locked = m.role == ChurchRole.admin || m.uid == myUid;
               return ListTile(
                 leading: CircleAvatar(child: Text(m.name.isEmpty ? '?' : m.name[0].toUpperCase())),
                 title: Text(m.name),
-                subtitle: Text(m.email),
+                subtitle: Text(
+                  m.title.isEmpty ? m.email : '${m.title}.  ${m.email}',
+                  style: TextStyle(color: muted, fontSize: 12),
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -79,6 +86,9 @@ class _MemberMenu extends ConsumerWidget {
       onSelected: (v) async {
         if (v == 'toggle') {
           await repo.setActive(churchId, member.uid, !member.active);
+        } else if (v == 'title') {
+          final title = await promptText(context, title: 'Title for ${member.name}', label: 'For example: Youth pastor');
+          if (title != null) await repo.setTitle(churchId, member.uid, title);
         } else if (v == 'reset') {
           await ref.read(authRepositoryProvider).sendPasswordReset(member.email);
           if (context.mounted) {
@@ -89,6 +99,7 @@ class _MemberMenu extends ConsumerWidget {
         }
       },
       itemBuilder: (_) => [
+        const PopupMenuItem(value: 'title', child: Text('Set a title (for example Youth pastor)')),
         for (final r in Permissions.assignableRoles)
           if (r != member.role) PopupMenuItem(value: 'role:${r.name}', child: Text('Make ${r.label}')),
         PopupMenuItem(value: 'toggle', child: Text(member.active ? 'Deactivate login' : 'Activate login')),
@@ -129,14 +140,14 @@ class _AddLoginSheetState extends ConsumerState<_AddLoginSheet> {
     setState(() => _busy = true);
     try {
       await ref.read(teamRepositoryProvider).createLogin(
-            adminUid: admin.uid,
-            churchId: membership.churchId,
-            churchName: membership.churchName,
-            name: _name.text.trim(),
-            email: _email.text.trim(),
-            role: _role,
-            tempPassword: _password.text,
-          );
+        adminUid: admin.uid,
+        churchId: membership.churchId,
+        churchName: membership.churchName,
+        name: _name.text.trim(),
+        email: _email.text.trim(),
+        role: _role,
+        tempPassword: _password.text,
+      );
       if (!mounted) return;
       Navigator.pop(context);
       await showCredentials(
@@ -150,10 +161,19 @@ class _AddLoginSheetState extends ConsumerState<_AddLoginSheet> {
     }
   }
 
+  String get _roleHelp => switch (_role) {
+    ChurchRole.accountant => 'Keeps the books, prepares budgets, orders and pays.',
+    ChurchRole.leadPastor => 'Approves budgets the admin sends, and sees the yearly reports.',
+    ChurchRole.pastor => 'Sees only the budgets that are shared with them.',
+    ChurchRole.staff => 'Office work and records.',
+    ChurchRole.leader => 'Marks attendance and requests purchases.',
+    _ => '',
+  };
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.fromLTRB(16, 8, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
       child: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -179,10 +199,7 @@ class _AddLoginSheetState extends ConsumerState<_AddLoginSheet> {
               const SizedBox(height: 12),
               DropdownButtonFormField<ChurchRole>(
                 initialValue: _role,
-                decoration: const InputDecoration(
-                  labelText: 'Role',
-                  helperText: 'Accountant: books, budgets, payments. Staff: office work and records.',
-                ),
+                decoration: InputDecoration(labelText: 'Role', helperText: _roleHelp),
                 items: [
                   for (final r in Permissions.assignableRoles) DropdownMenuItem(value: r, child: Text(r.label)),
                 ],
@@ -204,7 +221,7 @@ class _AddLoginSheetState extends ConsumerState<_AddLoginSheet> {
               FilledButton(
                 onPressed: _busy ? null : _save,
                 child: _busy
-                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2.4))
                     : const Text('Create login'),
               ),
             ],

@@ -8,7 +8,13 @@ import '../domain/finance_models.dart';
 
 /// Bottom sheet to record income (tithes, offerings, donations) or an expense.
 class TransactionForm extends ConsumerStatefulWidget {
-  const TransactionForm({super.key});
+  const TransactionForm({super.key, this.initialType = TxType.income, this.initialCategoryId, this.heading});
+
+  final TxType initialType;
+
+  /// For example 'tithe' or 'offering' to start with that category chosen.
+  final String? initialCategoryId;
+  final String? heading;
 
   @override
   ConsumerState<TransactionForm> createState() => _TransactionFormState();
@@ -25,10 +31,11 @@ class _LineOption {
 class _TransactionFormState extends ConsumerState<TransactionForm> {
   final _amount = TextEditingController();
   final _description = TextEditingController();
-  TxType _type = TxType.income;
+  late TxType _type = widget.initialType;
   PaymentMethod _method = PaymentMethod.cash;
   DateTime _date = DateTime.now();
-  String? _fundId, _categoryId, _memberId, _serviceId, _lineId;
+  String? _fundId, _memberId, _serviceId, _lineId;
+  late String? _categoryId = widget.initialCategoryId;
   bool _busy = false;
 
   @override
@@ -112,6 +119,8 @@ class _TransactionFormState extends ConsumerState<TransactionForm> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text(widget.heading ?? 'Record money', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
             SegmentedButton<TxType>(
               segments: const [
                 ButtonSegment(value: TxType.income, label: Text('Money in'), icon: Icon(Icons.south_west)),
@@ -196,7 +205,10 @@ class _TransactionFormState extends ConsumerState<TransactionForm> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
                   initialValue: _serviceId,
-                  decoration: const InputDecoration(labelText: 'Collected at service (optional)'),
+                  decoration: InputDecoration(
+                    labelText: 'Collected at service (optional)',
+                    helperText: widget.heading == 'Record offertory' ? 'Choose the service this offering was collected at' : null,
+                  ),
                   items: [
                     const DropdownMenuItem<String?>(value: null, child: Text('Not linked to a service')),
                     for (final s in services)
@@ -258,3 +270,16 @@ class _TransactionFormState extends ConsumerState<TransactionForm> {
     );
   }
 }
+
+/// Opens the entry form, optionally with tithe or offertory already chosen.
+Future<void> showTransactionSheet(
+    BuildContext context, {
+      TxType type = TxType.income,
+      String? categoryId,
+      String? heading,
+    }) =>
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => TransactionForm(initialType: type, initialCategoryId: categoryId, heading: heading),
+    );

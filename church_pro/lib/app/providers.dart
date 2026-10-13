@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/constants/access.dart';
 import '../core/constants/roles.dart';
 import '../core/utils/formatters.dart';
 import '../data/firebase/firebase_attendance_repository.dart';
@@ -24,6 +25,7 @@ import '../features/finance/domain/finance_models.dart';
 import '../features/members/data/member_repository.dart';
 import '../features/members/domain/member.dart';
 import '../features/platform/data/platform_repository.dart';
+import '../features/settings/data/church_settings_repository.dart';
 import '../features/procurement/data/procurement_repository.dart';
 import '../features/procurement/domain/requisition.dart';
 import '../features/team/data/team_repository.dart';
@@ -36,22 +38,22 @@ final _provisioningProvider = Provider<Provisioning>((ref) => Provisioning());
 final authRepositoryProvider = Provider<AuthRepository>((ref) => FirebaseAuthRepository());
 final churchRepositoryProvider = Provider<ChurchRepository>((ref) => FirebaseChurchRepository());
 final platformRepositoryProvider =
-    Provider<PlatformRepository>((ref) => PlatformRepository(provisioning: ref.watch(_provisioningProvider)));
+Provider<PlatformRepository>((ref) => PlatformRepository(provisioning: ref.watch(_provisioningProvider)));
 final teamRepositoryProvider =
-    Provider<TeamRepository>((ref) => TeamRepository(provisioning: ref.watch(_provisioningProvider)));
+Provider<TeamRepository>((ref) => TeamRepository(provisioning: ref.watch(_provisioningProvider)));
 final memberRepositoryProvider = Provider<MemberRepository>((ref) => FirebaseMemberRepository());
 final attendanceRepositoryProvider =
-    Provider<AttendanceRepository>((ref) => FirebaseAttendanceRepository());
+Provider<AttendanceRepository>((ref) => FirebaseAttendanceRepository());
 final eventRepositoryProvider = Provider<EventRepository>((ref) => FirebaseEventRepository());
 final financeRepositoryProvider = Provider<FinanceRepository>((ref) => FinanceRepository());
 final budgetRepositoryProvider = Provider<BudgetRepository>((ref) => BudgetRepository());
 final procurementRepositoryProvider =
-    Provider<ProcurementRepository>((ref) => ProcurementRepository(ref.watch(financeRepositoryProvider)));
+Provider<ProcurementRepository>((ref) => ProcurementRepository(ref.watch(financeRepositoryProvider)));
 final workRepositoryProvider = Provider<WorkRepository>((ref) => WorkRepository());
 
 // ── Session ──────────────────────────────────────────────────────────────
 final authStateProvider = StreamProvider<AppUser?>(
-  (ref) => ref.watch(authRepositoryProvider).authStateChanges(),
+      (ref) => ref.watch(authRepositoryProvider).authStateChanges(),
 );
 
 final isPlatformAdminProvider = StreamProvider<bool>((ref) {
@@ -75,7 +77,7 @@ class ActiveChurchNotifier extends Notifier<String?> {
 }
 
 final activeChurchIdProvider =
-    NotifierProvider<ActiveChurchNotifier, String?>(ActiveChurchNotifier.new);
+NotifierProvider<ActiveChurchNotifier, String?>(ActiveChurchNotifier.new);
 
 final membershipsProvider = StreamProvider<List<Membership>>((ref) {
   final user = ref.watch(authStateProvider).value;
@@ -93,13 +95,26 @@ final activeMembershipProvider = Provider<Membership?>((ref) {
 });
 
 final currentRoleProvider = Provider<ChurchRole>(
-  (ref) => ref.watch(activeMembershipProvider)?.role ?? ChurchRole.member,
+      (ref) => ref.watch(activeMembershipProvider)?.role ?? ChurchRole.member,
 );
 
-/// True when the signed-in user's role grants [permission] in the active church.
-final canProvider = Provider.family<bool, Permission>(
-  (ref, permission) => Permissions.can(ref.watch(currentRoleProvider), permission),
-);
+/// The church admin's own choices about who sees what (People, Planning, Inventory,
+/// Messages, Reports, Team work board). Empty until the admin changes something.
+final accessProvider = StreamProvider<Map<String, List<String>>>((ref) {
+  final churchId = ref.watch(activeChurchIdProvider);
+  if (churchId == null) return Stream.value(const <String, List<String>>{});
+  return ref.watch(settingsRepositoryProvider).watchAccess(churchId);
+});
+
+/// True when the signed-in user may use [permission] in the active church.
+/// For the modules the admin can configure, the admin's choice wins over the default.
+final canProvider = Provider.family<bool, Permission>((ref, permission) {
+  final role = ref.watch(currentRoleProvider);
+  final module = AccessModule.forPermission(permission);
+  final chosen = module == null ? null : ref.watch(accessProvider).value?[module.name];
+  if (chosen != null) return role == ChurchRole.admin || chosen.contains(role.name);
+  return Permissions.can(role, permission);
+});
 
 Stream<T> _forChurch<T>(Ref ref, T empty, Stream<T> Function(String churchId) build) {
   final id = ref.watch(activeChurchIdProvider);
@@ -108,22 +123,31 @@ Stream<T> _forChurch<T>(Ref ref, T empty, Stream<T> Function(String churchId) bu
 }
 
 final churchProvider = StreamProvider<Church?>(
-  (ref) => _forChurch<Church?>(ref, null, ref.watch(churchRepositoryProvider).watchChurch),
+      (ref) => _forChurch<Church?>(ref, null, ref.watch(churchRepositoryProvider).watchChurch),
 );
 
 final currencyProvider = Provider<String>((ref) => ref.watch(churchProvider).value?.currency ?? 'UGX');
 
+// ── Church profile (logo, contact details) ───────────────────────────────
+final settingsRepositoryProvider = Provider<ChurchSettingsRepository>((ref) => ChurchSettingsRepository());
+
+final churchProfileProvider = StreamProvider<ChurchProfile>((ref) {
+  final churchId = ref.watch(activeChurchIdProvider);
+  if (churchId == null) return Stream.value(const ChurchProfile());
+  return ref.watch(settingsRepositoryProvider).watchProfile(churchId);
+});
+
 // ── Platform admin ───────────────────────────────────────────────────────
 final platformChurchesProvider =
-    StreamProvider<List<Church>>((ref) => ref.watch(platformRepositoryProvider).watchChurches());
+StreamProvider<List<Church>>((ref) => ref.watch(platformRepositoryProvider).watchChurches());
 
 // ── People, attendance, events ───────────────────────────────────────────
 final membersProvider = StreamProvider<List<Member>>(
-  (ref) => _forChurch(ref, const <Member>[], ref.watch(memberRepositoryProvider).watchMembers),
+      (ref) => _forChurch(ref, const <Member>[], ref.watch(memberRepositoryProvider).watchMembers),
 );
 
 final servicesProvider = StreamProvider<List<ChurchService>>(
-  (ref) => _forChurch(ref, const <ChurchService>[], ref.watch(attendanceRepositoryProvider).watchServices),
+      (ref) => _forChurch(ref, const <ChurchService>[], ref.watch(attendanceRepositoryProvider).watchServices),
 );
 
 final presentIdsProvider = StreamProvider.family<Set<String>, String>((ref, serviceId) {
@@ -133,43 +157,43 @@ final presentIdsProvider = StreamProvider.family<Set<String>, String>((ref, serv
 });
 
 final eventsProvider = StreamProvider<List<ChurchEvent>>(
-  (ref) => _forChurch(ref, const <ChurchEvent>[], ref.watch(eventRepositoryProvider).watchEvents),
+      (ref) => _forChurch(ref, const <ChurchEvent>[], ref.watch(eventRepositoryProvider).watchEvents),
 );
 
 final teamProvider = StreamProvider<List<TeamMember>>(
-  (ref) => _forChurch(ref, const <TeamMember>[], ref.watch(teamRepositoryProvider).watchTeam),
+      (ref) => _forChurch(ref, const <TeamMember>[], ref.watch(teamRepositoryProvider).watchTeam),
 );
 
 // ── Finance ──────────────────────────────────────────────────────────────
 final fundsProvider = StreamProvider<List<Fund>>(
-  (ref) => _forChurch(ref, const <Fund>[], ref.watch(financeRepositoryProvider).watchFunds),
+      (ref) => _forChurch(ref, const <Fund>[], ref.watch(financeRepositoryProvider).watchFunds),
 );
 
 final categoriesProvider = StreamProvider<List<FinanceCategory>>(
-  (ref) => _forChurch(ref, const <FinanceCategory>[], ref.watch(financeRepositoryProvider).watchCategories),
+      (ref) => _forChurch(ref, const <FinanceCategory>[], ref.watch(financeRepositoryProvider).watchCategories),
 );
 
 /// Latest 100 ledger entries.
 final recentTransactionsProvider = StreamProvider<List<FinanceTransaction>>(
-  (ref) => _forChurch(
+      (ref) => _forChurch(
     ref,
     const <FinanceTransaction>[],
-    (id) => ref.watch(financeRepositoryProvider).watchTransactions(id, limit: 100),
+        (id) => ref.watch(financeRepositoryProvider).watchTransactions(id, limit: 100),
   ),
 );
 
 /// Every ledger entry since the start of this month (for totals).
 final monthTransactionsProvider = StreamProvider<List<FinanceTransaction>>(
-  (ref) => _forChurch(
+      (ref) => _forChurch(
     ref,
     const <FinanceTransaction>[],
-    (id) => ref.watch(financeRepositoryProvider).watchTransactions(id, since: startOfMonth(DateTime.now())),
+        (id) => ref.watch(financeRepositoryProvider).watchTransactions(id, since: startOfMonth(DateTime.now())),
   ),
 );
 
 // ── Budgets ──────────────────────────────────────────────────────────────
 final budgetsProvider = StreamProvider<List<Budget>>(
-  (ref) => _forChurch(ref, const <Budget>[], ref.watch(budgetRepositoryProvider).watchBudgets),
+      (ref) => _forChurch(ref, const <Budget>[], ref.watch(budgetRepositoryProvider).watchBudgets),
 );
 
 final activeBudgetProvider = Provider<Budget?>((ref) {
@@ -213,5 +237,5 @@ final todayWorkLogProvider = Provider<WorkLog?>((ref) {
 });
 
 final teamWorkLogsProvider = StreamProvider<List<WorkLog>>(
-  (ref) => _forChurch(ref, const <WorkLog>[], ref.watch(workRepositoryProvider).watchTeamLogs),
+      (ref) => _forChurch(ref, const <WorkLog>[], ref.watch(workRepositoryProvider).watchTeamLogs),
 );

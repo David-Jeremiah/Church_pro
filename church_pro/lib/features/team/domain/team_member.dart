@@ -7,6 +7,7 @@ class TeamMember {
     required this.email,
     required this.role,
     required this.active,
+    this.title = '',
   });
 
   final String uid;
@@ -14,4 +15,7 @@ class TeamMember {
   final String email;
   final ChurchRole role;
   final bool active;
+
+  /// What this person does, e.g. "Youth pastor". Set by the admin.
+  final String title;
 }

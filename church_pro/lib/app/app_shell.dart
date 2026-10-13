@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/constants/roles.dart';
 import '../core/theme/app_theme.dart';
+import '../core/widgets/church_logo.dart';
 import '../core/widgets/ui_kit.dart';
 import 'providers.dart';
 
@@ -22,7 +23,8 @@ class _Dest {
 const _destinations = [
   _Dest(0, 'Home', Icons.dashboard_outlined, Icons.dashboard, []),
   _Dest(1, 'People', Icons.people_outline, Icons.people, [Permission.viewMembers]),
-  _Dest(2, 'Services', Icons.fact_check_outlined, Icons.fact_check, [Permission.markAttendance]),
+  _Dest(2, 'Planning', Icons.calendar_month_outlined, Icons.calendar_month,
+      [Permission.viewPlanning, Permission.markAttendance]),
   _Dest(3, 'Finance', Icons.account_balance_wallet_outlined, Icons.account_balance_wallet,
       [Permission.viewFinance, Permission.requestPurchase]),
   _Dest(4, 'Work', Icons.badge_outlined, Icons.badge, [Permission.logWork]),
@@ -45,7 +47,7 @@ class AppShell extends ConsumerWidget {
 
     final visible = [
       for (final d in _destinations)
-        if (d.permissions.isEmpty || d.permissions.any((p) => Permissions.can(role, p))) d,
+        if (d.permissions.isEmpty || d.permissions.any((p) => ref.watch(canProvider(p)))) d,
     ];
     final selected = visible.indexWhere((d) => d.branch == shell.currentIndex);
     if (selected < 0) {
@@ -57,10 +59,19 @@ class AppShell extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
+        actions: [
+          if (ref.watch(canProvider(Permission.useChat)))
+            IconButton(
+              tooltip: 'Messages',
+              icon: const Icon(Icons.forum_outlined),
+              onPressed: () => context.push('/messages'),
+            ),
+          const SizedBox(width: 4),
+        ],
         titleSpacing: 0,
         title: Row(
           children: [
-            InitialAvatar(membership?.churchName ?? '', size: 34),
+            const ChurchLogo(size: 34),
             const SizedBox(width: 12),
             Flexible(
               child: Column(
@@ -166,12 +177,22 @@ class _AppDrawer extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 ListTile(leading: const Icon(Icons.event_outlined), title: const Text('Events'), onTap: () => open('/events')),
-                if (Permissions.can(role, Permission.manageUsers))
+                if (ref.watch(canProvider(Permission.viewInventory)))
+                  ListTile(leading: const Icon(Icons.inventory_2_outlined), title: const Text('Inventory'), onTap: () => open('/inventory')),
+                if (ref.watch(canProvider(Permission.useChat)))
+                  ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Messages'), onTap: () => open('/messages')),
+                if (Permissions.can(role, Permission.manageUsers)) ...[
                   ListTile(
                     leading: const Icon(Icons.manage_accounts_outlined),
                     title: const Text('Team and logins'),
                     onTap: () => open('/team'),
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.tune),
+                    title: const Text('Church settings'),
+                    onTap: () => open('/settings'),
+                  ),
+                ],
                 ListTile(
                   leading: const Icon(Icons.lock_reset),
                   title: const Text('Change password'),

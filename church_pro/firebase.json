@@ -1,1 +1,41 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"church-pro-99ca9","appId":"1:603783788848:android:efbbfb2d98500c6c8970f5","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"church-pro-99ca9","configurations":{"android":"1:603783788848:android:efbbfb2d98500c6c8970f5","ios":"1:603783788848:ios:36f9b9d90150e69d8970f5","windows":"1:603783788848:web:869d7505d8a4e8a58970f5"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "church-pro-99ca9",
+          "appId": "1:603783788848:android:efbbfb2d98500c6c8970f5",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "church-pro-99ca9",
+          "configurations": {
+            "android": "1:603783788848:android:efbbfb2d98500c6c8970f5",
+            "ios": "1:603783788848:ios:36f9b9d90150e69d8970f5",
+            "windows": "1:603783788848:web:869d7505d8a4e8a58970f5"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ]
+}

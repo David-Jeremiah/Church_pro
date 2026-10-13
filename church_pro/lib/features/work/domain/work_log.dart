@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 enum WorkMode {
   office('Office', Icons.business),
-  home('Home', Icons.home_work_outlined),
-  field('Field', Icons.directions_walk);
+  home('Home', Icons.home_work_outlined);
 
   const WorkMode(this.label, this.icon);
   final String label;

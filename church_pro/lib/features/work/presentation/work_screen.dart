@@ -33,7 +33,7 @@ class WorkScreen extends ConsumerWidget {
 
 String _modeCounts(Iterable<WorkLog> logs) {
   int n(WorkMode m) => logs.where((l) => l.mode == m).length;
-  return 'Office ${n(WorkMode.office)} · Home ${n(WorkMode.home)} · Field ${n(WorkMode.field)}';
+  return 'Office ${n(WorkMode.office)} · Home ${n(WorkMode.home)}';
 }
 
 class _MyWork extends ConsumerWidget {
@@ -206,14 +206,14 @@ class _PastDaySheetState extends ConsumerState<_PastDaySheet> {
     final churchId = ref.read(activeChurchIdProvider);
     if (hours == null || hours <= 0 || hours > 16 || user == null || churchId == null) return;
     await ref.read(workRepositoryProvider).logPastDay(
-          churchId,
-          uid: user.uid,
-          name: user.displayName,
-          day: _day,
-          mode: _mode,
-          hours: hours,
-          notes: _notes.text.trim(),
-        );
+      churchId,
+      uid: user.uid,
+      name: user.displayName,
+      day: _day,
+      mode: _mode,
+      hours: hours,
+      notes: _notes.text.trim(),
+    );
     if (mounted) Navigator.pop(context);
   }
 

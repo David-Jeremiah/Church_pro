@@ -6,17 +6,21 @@
 enum ChurchRole {
   admin,
   accountant,
+  leadPastor,
   pastor,
   leader,
   staff,
   member;
 
-  String get label => name[0].toUpperCase() + name.substring(1);
+  String get label => switch (this) {
+    ChurchRole.leadPastor => 'Lead pastor',
+    _ => name[0].toUpperCase() + name.substring(1),
+  };
 
   static ChurchRole fromName(String? value) => ChurchRole.values.firstWhere(
         (r) => r.name == value,
-        orElse: () => ChurchRole.member,
-      );
+    orElse: () => ChurchRole.member,
+  );
 }
 
 enum Permission {
@@ -25,9 +29,17 @@ enum Permission {
   markAttendance,
   manageServices,
   manageEvents,
-  viewFinance, // ledger, funds, overview, budgets
+  viewPlanning, // the calendar and the Sunday plans
+  viewInventory,
+  manageInventory, // add items, take stock in and out
+  useChat,
+  viewFinance, // ledger, funds, overview, giving
+  viewFinanceSummary, // yearly reports only (lead pastor)
   recordTransactions,
-  manageBudgets,
+  manageBudgets, // create, edit and send budgets for approval
+  viewBudgets, // budgets shared with you, and the active budget
+  commentBudget,
+  approveBudget, // lead pastor only
   requestPurchase,
   approvePurchase,
   processPurchase, // order, receive, pay
@@ -40,16 +52,40 @@ enum Permission {
 /// the same matrix on the server.
 ///
 /// Accounting is done by the admin, or by the accountant when the church has one.
+/// Budgets are prepared by the admin/accountant and approved by the lead pastor.
 class Permissions {
-  static const Map<ChurchRole, Set<Permission>> _matrix = {
-    ChurchRole.admin: {...Permission.values},
+  static final Map<ChurchRole, Set<Permission>> _matrix = {
+    // The admin prepares budgets and sends them on; approval belongs to the lead pastor.
+    ChurchRole.admin: Permission.values.where((p) => p != Permission.approveBudget).toSet(),
     ChurchRole.accountant: {
       Permission.viewMembers,
       Permission.viewFinance,
       Permission.recordTransactions,
       Permission.manageBudgets,
+      Permission.viewBudgets,
+      Permission.commentBudget,
+      Permission.viewPlanning,
+      Permission.viewInventory,
+      Permission.manageInventory,
+      Permission.useChat,
       Permission.requestPurchase,
       Permission.processPurchase,
+      Permission.logWork,
+    },
+    ChurchRole.leadPastor: {
+      Permission.viewMembers,
+      Permission.manageMembers,
+      Permission.markAttendance,
+      Permission.manageServices,
+      Permission.manageEvents,
+      Permission.viewFinanceSummary,
+      Permission.viewBudgets,
+      Permission.commentBudget,
+      Permission.approveBudget,
+      Permission.viewPlanning,
+      Permission.viewInventory,
+      Permission.useChat,
+      Permission.requestPurchase,
       Permission.logWork,
     },
     ChurchRole.pastor: {
@@ -58,12 +94,22 @@ class Permissions {
       Permission.markAttendance,
       Permission.manageServices,
       Permission.manageEvents,
+      Permission.viewBudgets,
+      Permission.commentBudget,
+      Permission.viewPlanning,
+      Permission.viewInventory,
+      Permission.useChat,
       Permission.requestPurchase,
       Permission.logWork,
     },
     ChurchRole.leader: {
       Permission.viewMembers,
       Permission.markAttendance,
+      Permission.viewBudgets,
+      Permission.commentBudget,
+      Permission.viewPlanning,
+      Permission.viewInventory,
+      Permission.useChat,
       Permission.requestPurchase,
     },
     ChurchRole.staff: {
@@ -72,6 +118,12 @@ class Permissions {
       Permission.markAttendance,
       Permission.manageServices,
       Permission.manageEvents,
+      Permission.viewBudgets,
+      Permission.commentBudget,
+      Permission.viewPlanning,
+      Permission.viewInventory,
+      Permission.manageInventory,
+      Permission.useChat,
       Permission.requestPurchase,
       Permission.logWork,
     },
@@ -83,6 +135,7 @@ class Permissions {
   /// Roles a church admin may create logins for (never another admin).
   static const assignableRoles = [
     ChurchRole.accountant,
+    ChurchRole.leadPastor,
     ChurchRole.pastor,
     ChurchRole.staff,
     ChurchRole.leader,

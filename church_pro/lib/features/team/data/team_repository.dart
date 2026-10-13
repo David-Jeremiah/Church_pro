@@ -17,16 +17,17 @@ class TeamRepository {
   Stream<List<TeamMember>> watchTeam(String churchId) =>
       _db.collection('churches').doc(churchId).collection('team').snapshots().map(
             (s) => s.docs
-                .map((d) => TeamMember(
-                      uid: d.id,
-                      name: stringOf(d.data()['displayName']),
-                      email: stringOf(d.data()['email']),
-                      role: ChurchRole.fromName(d.data()['role'] as String?),
-                      active: (d.data()['status'] ?? 'active') == 'active',
-                    ))
-                .toList()
-              ..sort((a, b) => a.name.compareTo(b.name)),
-          );
+            .map((d) => TeamMember(
+          uid: d.id,
+          name: stringOf(d.data()['displayName']),
+          email: stringOf(d.data()['email']),
+          role: ChurchRole.fromName(d.data()['role'] as String?),
+          active: (d.data()['status'] ?? 'active') == 'active',
+          title: stringOf(d.data()['title']),
+        ))
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name)),
+      );
 
   /// Creates a login for a new team member (called by the church admin).
   Future<void> createLogin({
@@ -72,6 +73,11 @@ class TeamRepository {
   }
 
   Future<void> setRole(String churchId, String uid, ChurchRole role) => _update(churchId, uid, {'role': role.name});
+
+  /// A label such as "Youth pastor" shown beside the person's name.
+  Future<void> setTitle(String churchId, String uid, String title) => queued(
+    _db.collection('churches').doc(churchId).collection('team').doc(uid).update({'title': title}),
+  );
 
   Future<void> setActive(String churchId, String uid, bool active) =>
       _update(churchId, uid, {'status': active ? 'active' : 'suspended'});
